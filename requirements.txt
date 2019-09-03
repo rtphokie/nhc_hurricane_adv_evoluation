@@ -1,0 +1,9 @@
+matplotlib
+pillow
+git+https://github.com/matplotlib/basemap.git
+tqdm
+imageio
+imageio-ffmpeg
+pyshp
+dateparser
+requests
