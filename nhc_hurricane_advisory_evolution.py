@@ -269,11 +269,9 @@ def format_date(date):
 
 
 class MyTestCase(unittest.TestCase):
-    @unittest.skip("demonstrating skipping")
     def test_3_movie(self):
         makemovie('frames')
 
-    @unittest.skip("demonstrating skipping")
     def test_0_plot(self):
         positions = []
         dtss = []
@@ -282,7 +280,6 @@ class MyTestCase(unittest.TestCase):
         positions, dtss = main("%03d" % 25, positions, dtss)
         positions, dtss = main("%03dA" % 36, positions, dtss)
 
-    @unittest.skip("demonstrating skipping")
     def test_1_plots(self):
         get_advisories('2019Dorian', 'al052019_5day')
         positions = []
@@ -292,14 +289,8 @@ class MyTestCase(unittest.TestCase):
                 advisory = filename.replace('al052019_5day_','')
                 positions, dtss = main(advisory, positions, dtss)
 
-    @unittest.skip("demonstrating skipping")
     def test_0_ad(self):
         get_advisories()
-
-    # @unittest.skip("demonstrating skipping")
-    def test_2_make_frames(self):
-        make_frames('2019Dorian', 'al052019_5day', fetch_new_advisories=True)
-        makemovie('frames')
 
 if __name__ == '__main__':
     make_frames('2019Dorian', 'al052019_5day', fetch_new_advisories=True)
