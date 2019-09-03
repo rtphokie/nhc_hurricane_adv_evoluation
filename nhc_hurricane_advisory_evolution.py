@@ -6,6 +6,7 @@ from io import StringIO
 import warnings
 import requests
 import matplotlib.pyplot as plt
+import matplotlib as mpl
 from matplotlib.collections import PatchCollection
 from matplotlib.patches import Polygon
 import numpy as np
@@ -32,7 +33,7 @@ cdict = {'red':   ((0.0, 0.0, 0.0),
                    (0.5, 0.0, 0.0),
                    (1.0, 0.0, 0.0))}
 
-cmap_g2r = mcolors.LinearSegmentedColormap( 'my_colormap', cdict, 100)
+cmap_g2r = mcolors.LinearSegmentedColormap( 'my_colormap', cdict, 200)
 
 
 def ignore_warnings(test_func):
@@ -110,34 +111,47 @@ def make_frames(dir, adv, fetch_new_advisories=True):
             continue
         m = make_map(projection='mill', background='BlueMarble')
         cnt=0
-        pastadvs = []
-        for advisnum2 in tqdm(data.keys()):
-            if advisnum2 < advisnum:
-                pastadvs.append(advisnum2)
-        total = len(pastadvs)*2.0
-        linelats = []
-        linelons = []
-        lats = []
-        lons = []
-        winds = []
+        pastadvs = previous_advisories(advisnum, data)
+        # initialize off map with maximum to ensure early plots reflect a 0-200 scale
+        lats = [0]
+        lons = [0]
+        winds = [200]
+        prevcstr = ''
+        catstr = ''
         for advisnum2 in tqdm(pastadvs):
             cnt +=1
-            val = (cnt/total)+.25
             m.readshapefile(data[advisnum2]['lin']['filename'].replace('.shp', ''), 'past_track',
-                                             linewidth=0.5, color= 'grey', )
+                                             linewidth=0.5, color= 'grey', zorder=1)
             m.readshapefile(data[advisnum2]['pts']['filename'].replace('.shp', ''), 'past_pts',
-                                             linewidth=0.0, color= cmap(val), )
+                                             linewidth=0.0)
             pos = data[advisnum2]['lin']['points'][0]
             lons.append(pos[0])
             lats.append(pos[1])
-            pos = data[advisnum2]['lin']['points'][0]
+            wind = m.past_pts_info[0]['MAXWIND']
+            if wind >= 157:
+                catstr = 'cat 5'
+            if wind >= 130:
+                catstr = 'cat 4'
+            if wind >= 111:
+                catstr = 'cat 3'
+            if wind >= 96:
+                catstr = 'cat 2'
+            if wind >= 74:
+                catstr = 'cat 1'
+            if wind >= 39:
+                catstr = 'TS'
+            if wind > 0:
+                catstr = 'TD'
+            if catstr != prevcstr:
+                prevcstr = catstr
+                print(catstr)
             winds.append(m.past_pts_info[0]['GUST'])
         x, y = m(lons, lats)
-        plt.scatter(x, y, c=winds, cmap=cmap_g2r, marker='o', s=8, alpha=1)
+        plt.scatter(x, y, c=winds, cmap=cmap_g2r, marker='o', s=8, alpha=1, zorder=4)
         pos = data[advisnum]['lin']['points'][0]
         xh, yh = m(pos[0], pos[1])
         plt.plot(xh, yh, 'ok', markersize=2.5, alpha=0.5)
-        shp_info_track = m.readshapefile(v['lin']['filename'].replace('.shp', ''), 'track', linewidth=2.5, color='k')
+        shp_info_track = m.readshapefile(v['lin']['filename'].replace('.shp', ''), 'track', linewidth=2.5, color='k', zorder=5)
         shp_info_pgn = m.readshapefile(v['pgn']['filename'].replace('.shp', ''), 'cone', linewidth=0.0, color='b')
         patches=[]
         for info, shape in zip(m.cone_info, m.cone):
@@ -157,6 +171,15 @@ def make_frames(dir, adv, fetch_new_advisories=True):
         pastadvisories.append(advisnum)
         # pprint(v)
         plt.clf()
+
+
+def previous_advisories(advisnum, data):
+    pastadvs = []
+    for advisnum2 in tqdm(data.keys()):
+        if advisnum2 < advisnum:
+            pastadvs.append(advisnum2)
+    return pastadvs
+
 
 def get_data_from_shapefiles(dir):
     data = {}
@@ -216,58 +239,6 @@ def uniqueify_metadata(records):
             # with each point
             metadata[k] = v[0]
     return metadata
-
-def main(x, positions, times):
-    m = make_map(projection='mill', background='BlueMarble')
-    shpf_track = shapefile.Reader("2019Dorian/al052019_5day_%s/al052019-%s_5day_lin" % (x, x))
-
-    shp_info_track = m.readshapefile('2019Dorian/al052019_5day_%s/al052019-%s_5day_lin' % (x, x), 'hurrtracks')
-    shp_info_pgn = m.readshapefile('2019Dorian/al052019_5day_%s/al052019-%s_5day_pgn' % (x, x), 'pgn')
-
-    names = []
-    for shapedict in m.pgn_info:
-        date = shapedict['ADVDATE']
-    for shapedict in m.hurrtracks_info:
-        storm_type = shapedict['STORMTYPE']
-        name = shapedict['STORMNAME']
-
-    # plot tracks of those storms.
-    for shapedict, shape in zip(m.hurrtracks_info, m.hurrtracks):
-        # name = shapedict['STORMNAME']
-        storm_type = shapedict['STORMTYPE']
-        xx, yy = zip(*shape)
-        # show part of track where storm > Cat 4 as thick red.
-        if storm_type in ['TD']:
-            m.plot(xx, yy, linewidth=1.5, color='r')
-        elif storm_type in ['TS']:
-            m.plot(xx, yy, linewidth=2.5, color='r')
-        else:
-            m.plot(xx, yy, linewidth=3.5, color='r')
-
-    storm_type = translate_storm_type(storm_type)
-
-    plt.title(f"{storm_type} Dorian forecasted track")
-    # plt.show()
-
-    dtstr, dtstrshort = format_date(date)
-    times.append(dtstrshort)
-    shapes = shpf_track.shapes()
-    positions.append(shapes[0].points[0])
-    for pos, dtstrshort in zip(positions, times):
-        if pos is not None:
-            xh, yh = m(pos[0], pos[1])
-            plt.plot(xh, yh, 'ok', markersize=3, alpha=0.2)
-    plt.plot(xh, yh, 'ok', markersize=6, alpha=1.0)
-
-
-    plt.annotate(dtstr, xy=(.5, -.1), xycoords='axes fraction', horizontalalignment='center')
-    plt.annotate(f"advisory {x}", xy=(.5, -.14), xycoords='axes fraction', horizontalalignment='center')
-    plt.annotate(f"data: NOAA/NHC viz:Tony Rice @rtphokie", xy=(1.1, -.19), xycoords='axes fraction',
-                 horizontalalignment='right', fontsize=6)
-
-    plt.savefig('frames/themap_%s.png' % x)
-    plt.clf()
-    return positions, times
 
 def makemovie(mypath):
     filenames = [f for f in listdir(mypath) if isfile(join(mypath, f))]
@@ -331,4 +302,5 @@ class MyTestCase(unittest.TestCase):
         makemovie('frames')
 
 if __name__ == '__main__':
-    unittest.main()
+    make_frames('2019Dorian', 'al052019_5day', fetch_new_advisories=True)
+    makemovie('frames')
