@@ -1,40 +1,35 @@
-import unittest
-from mpl_toolkits.basemap import Basemap
-import matplotlib.pyplot as plt
-import zipfile
-from io import StringIO
-import warnings
-import requests
-import matplotlib.pyplot as plt
-import matplotlib as mpl
-from matplotlib.collections import PatchCollection
-from matplotlib.patches import Polygon
-import numpy as np
-from tqdm import tqdm
-import os,io
-import shapefile
-import datetime
-import pytz
-from os import listdir
-from os.path import isfile, join
-import logging
-from pprint import pprint
 '''
 https://www.nhc.noaa.gov/gis/
 '''
+author = "@rtphokie"
+from io import StringIO
+from matplotlib.collections import PatchCollection
+from matplotlib.patches import Polygon
+from mpl_toolkits.basemap import Basemap
+from os import listdir
+from os.path import isfile, join
+from pprint import pprint
+from tqdm import tqdm
+import datetime
+import imageio
 import matplotlib.colors as mcolors
-
+import matplotlib.pyplot as plt
+import numpy as np
+import os,io
+import pathlib
+import pytz
+import requests
+import shapefile
+import unittest
+import warnings
+import zipfile
 cdict = {'red':   ((0.0, 0.0, 0.0),
-                   (0.5, 0.0, 0.0),
-                   (1.0, 1.0, 1.0)),
-         'blue':  ((0.0, 0.0, 0.0),
-                   (1.0, 0.0, 0.0)),
-         'green': ((0.0, 0.0, 1.0),
-                   (0.5, 0.0, 0.0),
                    (1.0, 0.0, 0.0))}
 
 cmap_g2r = mcolors.LinearSegmentedColormap( 'my_colormap', cdict, 200)
 
+def get_year(year=2019):
+    jkl = None
 
 def ignore_warnings(test_func):
     def do_test(self, *args, **kwargs):
@@ -65,49 +60,62 @@ def make_map(projection='mill', resolution='l', background=None,
     m.drawstates()
     return m
 
-def get_advisories(dir, pref):
+def setup_directories(basedir):
+    for dir in ['animations', 'frames', 'nhc_data/5day', 'nhc_data/fcst']:
+        pathlib.Path(f"{basedir}/{dir}").mkdir(parents=True, exist_ok=True)
+
+def get_advisories(dir, year, storm, basin='AL'):
+    if year < 2008:
+        raise Exception('NHC data begins in 2018 ')
+    setup_directories(dir)
     #https://www.nhc.noaa.gov/gis/forecast/archive/al052019_5day_036.zip
-    done = False
+    #https://www.nhc.noaa.gov/gis/forecast/archive/al052019_fcst_001.zip
     goget = []
-    for filename in sorted(os.listdir(dir)):
-        advisory = filename.replace('al052019_5day_', '')
-    if 'A' not in advisory:
-        goget.append("%03dA" % int(advisory))
-    goget.append("%03d" % (int(advisory.replace('A', '')) + 1))
-    statuses=[]
-    for s in goget:
-        zip_file_url = f"https://www.nhc.noaa.gov/gis/forecast/archive/{pref}_{s}.zip"
-        r = requests.get(zip_file_url, stream=True)
-        statuses.append(r.status_code)
-        if r.status_code < 300:
-            cwd = os.getcwd()
-            path = f"{dir}/{pref}_{s}"
-            os.mkdir(path)
-            print (f"created {path}")
-            os.chdir(path)
-            z = zipfile.ZipFile(io.BytesIO(r.content))
-            z.extractall()
-            os.chdir(cwd)
+    advisory = '0'
+    # for prod in [ 'fcst']:
+    for prod in ['5day', 'fcst']:
+        pref = f"{basin}{storm:02d}{year}_{prod}".lower()
+        # print(pref)
+        for filename in sorted(os.listdir(f"{dir}/nhc_data/{prod}")):
+            if pref in filename:
+                advisory = filename.replace(f"{pref}_", '')
+        if 'A' not in advisory:
+            goget.append("%03dA" % int(advisory))
+        goget.append("%03d" % (int(advisory.replace('A', '')) + 1))
+        statuses=[]
+        for s in goget:
+            path = f"{dir}/nhc_data/{prod}/{pref}_{s}"
+            zip_file_url = f"https://www.nhc.noaa.gov/gis/forecast/archive/{pref}_{s}.zip"
+            # print(f"{path} {zip_file_url}")
+            r = requests.get(zip_file_url, stream=True)
+            statuses.append(r.status_code)
+            if r.status_code < 300:
+                cwd = os.getcwd()
+                pathlib.Path(path).mkdir(parents=True, exist_ok=True)
+                print (f"created {path}")
+                os.chdir(path)
+                z = zipfile.ZipFile(io.BytesIO(r.content))
+                z.extractall()
+                os.chdir(cwd)
 
     if not list(set(statuses))[0] >= 300:
         # keep going until all downloads fail
-        get_advisories(dir=dir, pref=pref)
+        get_advisories(dir, year, storm, basin=basin)
 
-def make_frames(dir, adv, fetch_new_advisories=True):
+def make_frames(dir, year, storm, basin='AL', fetch_latest_adv=True, overwrite=False):
+    adv=f"{basin}{storm:02}{year}_5day"
     if not os.path.exists(dir):
         os.mkdir(dir)
-    if fetch_new_advisories:
-        get_advisories(dir, adv)
+    if fetch_latest_adv:
+        get_advisories(dir,year, storm, basin=basin)
 
     data = get_data_from_shapefiles(dir)
 
-    pastadvisories = []
-    cmap = plt.cm.get_cmap('binary')
     for advisnum, v in tqdm(sorted(data.items())):
         fig = plt.figure()
         ax = fig.add_subplot(111)
-        pltfilename = 'frames/themap_%s.png' % advisnum
-        if os.path.exists(pltfilename):
+        pltfilename = f"{dir}/frames/{dir}_{advisnum}.png"
+        if not overwrite and os.path.exists(pltfilename):
             continue
         m = make_map(projection='mill', background='BlueMarble')
         cnt=0
@@ -147,7 +155,8 @@ def make_frames(dir, adv, fetch_new_advisories=True):
                 print(catstr)
             winds.append(m.past_pts_info[0]['GUST'])
         x, y = m(lons, lats)
-        plt.scatter(x, y, c=winds, cmap=cmap_g2r, marker='o', s=8, alpha=1, zorder=4)
+        # plt.scatter(x, y, c=winds, cmap=cmap_g2r, marker='o', s=8, alpha=1, zorder=4)
+        plt.scatter(x, y, c=winds, marker='o', s=8, alpha=1, zorder=4)
         pos = data[advisnum]['lin']['points'][0]
         xh, yh = m(pos[0], pos[1])
         plt.plot(xh, yh, 'ok', markersize=2.5, alpha=0.5)
@@ -160,18 +169,15 @@ def make_frames(dir, adv, fetch_new_advisories=True):
 
         plt.annotate(v['date'], xy=(.5, -.1), xycoords='axes fraction', horizontalalignment='center')
         plt.annotate(f"advisory {advisnum}", xy=(.5, -.14), xycoords='axes fraction', horizontalalignment='center')
-        plt.annotate(f"data: NOAA/NHC viz:Tony Rice @rtphokie", xy=(1.27, -.127),
+        plt.annotate(f"data: NOAA/NHC viz:{author}", xy=(1.27, -.127),
                      xycoords='axes fraction',
                      horizontalalignment='right', fontsize=6)
         plt.title(f"{v['STORMNAME']} forecasted track")
         # clb = plt.colorbar()
         # clb.set_label('winds (mph)')#, labelpad=-40, y=1.05, rotation=0)
 
-        plt.savefig(pltfilename)
-        pastadvisories.append(advisnum)
-        # pprint(v)
+        plt.savefig(pltfilename, format='png')
         plt.clf()
-
 
 def previous_advisories(advisnum, data):
     pastadvs = []
@@ -180,15 +186,15 @@ def previous_advisories(advisnum, data):
             pastadvs.append(advisnum2)
     return pastadvs
 
-
 def get_data_from_shapefiles(dir):
+    basedir = f"{dir}/nhc_data"
     data = {}
-    for dirname in sorted(os.listdir(dir)):
+    for dirname in sorted(os.listdir(basedir)):
         if dirname.startswith('.'):
-            continue
-        for filename in sorted(os.listdir(f"{dir}/{dirname}")):
+            continue  # pesky .DS_Store files
+        for filename in sorted(os.listdir(f"{basedir}/{dirname}")):
             if filename.endswith('.shp'):
-                shpfilename = f"{dir}/{dirname}/{filename}"
+                shpfilename = f"{basedir}/{dirname}/{filename}"
                 shpf_track = shapefile.Reader(shpfilename)
                 advisnum = shpf_track.records()[0].as_dict()['ADVISNUM']
                 if 'A' in advisnum:
@@ -240,17 +246,31 @@ def uniqueify_metadata(records):
             metadata[k] = v[0]
     return metadata
 
-def makemovie(mypath):
+def makemovie(dir, duration=10, slowatend=True,maxfps=8):
+    mypath = f"{dir}/frames"
     filenames = [f for f in listdir(mypath) if isfile(join(mypath, f))]
-    import imageio
     images = []
+    imgcnt=len(filenames)
+    frameno = 0
     for filename in tqdm(sorted(filenames), unit='frame', desc='assemble frames'):
-        try:
+        frameno += 1
+        accel = 0
+        if slowatend:
+            y = 1 / ((imgcnt +1) - frameno)
+            r = round(maxfps*y)+1
+            for x in range(0,r):
+                images.append(imageio.imread(f"{mypath}/{filename}"))
+        else:
+            print (e)
             images.append(imageio.imread(f"{mypath}/{filename}"))
-        except:
-            print(f"skipping {filename}")
-    imageio.mimsave('dorian_track_evolution.gif', images, fps=2.5)
-    imageio.mimsave('dorian_track_evolution.mp4', images, fps=2)
+    fps = maxfps
+    for ext in ['gif', 'mp4']:
+        if 'gif' in ext:
+            imageio.mimsave(f"{dir}/animations/{dir}_track_evolution.{ext}",
+                            images, fps=fps, loop=1)
+        else:
+            imageio.mimsave(f"{dir}/animations/{dir}_track_evolution.{ext}",
+                            images, fps=fps)
 
 def format_date(date):
     dt = datetime.datetime.strptime(date.replace('AST', 'EST'), '%I%M %p %Z %a %b %d %Y')
@@ -269,29 +289,33 @@ def format_date(date):
 
 
 class MyTestCase(unittest.TestCase):
+    def test_log(self):
+        accel = 0
+        fps = 8.0
+        for frameno in range(1,81):
+            y = 1 / (81 - frameno)
+            r = round(fps*y)+1
+            # y = fps - y
+            print (f"{frameno:2} {y:5.2} {r:5}")
+
     def test_3_movie(self):
-        makemovie('frames')
+        makemovie('2019Dorian')
 
-    def test_0_plot(self):
-        positions = []
-        dtss = []
-        positions, dtss = main("%03d" % 1, positions, dtss)
-        positions, dtss = main("%03d" % 15, positions, dtss)
-        positions, dtss = main("%03d" % 25, positions, dtss)
-        positions, dtss = main("%03dA" % 36, positions, dtss)
+    def test_dirs(self):
+        for basedir in ['2019Dorian', '2018Florence']:
+            setup_directories(basedir)
+            for dir in ['animations', 'frames', 'nhc_data']:
+               self.assertTrue(os.path.isdir(f"{basedir}/{dir}"))
 
-    def test_1_plots(self):
-        get_advisories('2019Dorian', 'al052019_5day')
-        positions = []
-        dtss = []
-        for filename in tqdm(sorted(os.listdir('2019Dorian'))):
-            if '_5day_' in filename:
-                advisory = filename.replace('al052019_5day_','')
-                positions, dtss = main(advisory, positions, dtss)
+    def test_2_Dorian(self):
+        # get_advisories('2019Dorian', year=2019, storm=5)
+        make_frames('2019Dorian', year=2019, storm=5, fetch_latest_adv=True)
+        makemovie('2019Dorian')
 
-    def test_0_ad(self):
-        get_advisories()
-
+    def test_3_Florence(self):
+        # get_advisories('2018Florence', 2018, 6)
+        make_frames('2018Florence', 2018, 6)
+        # makemovie('2018Florence')
 if __name__ == '__main__':
-    make_frames('2019Dorian', 'al052019_5day', fetch_new_advisories=True)
-    makemovie('frames')
+    make_frames('2019Dorian', year=2019, storm=5, fetch_latest_adv=True)
+    makemovie('2019Dorian')
