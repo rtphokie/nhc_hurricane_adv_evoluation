@@ -23,10 +23,9 @@ import shapefile
 import unittest
 import warnings
 import zipfile
-cdict = {'red':   ((0.0, 0.0, 0.0),
-                   (1.0, 0.0, 0.0))}
+from matplotlib.pyplot import figure
 
-cmap_g2r = mcolors.LinearSegmentedColormap( 'my_colormap', cdict, 200)
+cmap = mcolors.LinearSegmentedColormap.from_list("", ["green", "yellow", "red"])
 
 def get_year(year=2019):
     jkl = None
@@ -39,7 +38,7 @@ def ignore_warnings(test_func):
 
     return do_test
 
-def make_map(projection='mill', resolution='l', background=None,
+def make_map(projection='mill', resolution='h', background=None,
              llcrnrlon=-85., llcrnrlat=10.,
              urcrnrlon=-45., urcrnrlat=45.,
              ):
@@ -47,14 +46,15 @@ def make_map(projection='mill', resolution='l', background=None,
                 llcrnrlon=llcrnrlon, llcrnrlat=llcrnrlat,
                 urcrnrlon=urcrnrlon, urcrnrlat=urcrnrlat,
                 )
+    figure(num=None, figsize=(8, 6), dpi=300, facecolor='w', edgecolor='w')
     if background == 'BlueMarble':
         # m.bluemarble()
         m.shadedrelief()
     else:
         m.fillcontinents(color='#cc9966', lake_color='#99ffff')
         m.drawmapboundary(fill_color='#99ffff')
-    m.drawparallels(np.arange(10, 70, 10), alpha=0.4, color='grey', labels=[1, 1, 0, 0])
-    m.drawmeridians(np.arange(-100, 0, 10), alpha=0.4, color='grey', labels=[0, 0, 0, 1])
+    # m.drawparallels(np.arange(10, 70, 10), alpha=0.4, color='grey', labels=[1, 1, 0, 0])
+    # m.drawmeridians(np.arange(-100, 0, 10), alpha=0.4, color='grey', labels=[0, 0, 0, 1])
     m.drawcoastlines()
     m.drawcountries()
     m.drawstates()
@@ -75,7 +75,6 @@ def get_advisories(dir, year, storm, basin='AL'):
     # for prod in [ 'fcst']:
     for prod in ['5day', 'fcst']:
         pref = f"{basin}{storm:02d}{year}_{prod}".lower()
-        # print(pref)
         for filename in sorted(os.listdir(f"{dir}/nhc_data/{prod}")):
             if pref in filename:
                 advisory = filename.replace(f"{pref}_", '')
@@ -86,7 +85,6 @@ def get_advisories(dir, year, storm, basin='AL'):
         for s in goget:
             path = f"{dir}/nhc_data/{prod}/{pref}_{s}"
             zip_file_url = f"https://www.nhc.noaa.gov/gis/forecast/archive/{pref}_{s}.zip"
-            # print(f"{path} {zip_file_url}")
             r = requests.get(zip_file_url, stream=True)
             statuses.append(r.status_code)
             if r.status_code < 300:
@@ -109,23 +107,23 @@ def make_frames(dir, year, storm, basin='AL', fetch_latest_adv=True, overwrite=F
     if fetch_latest_adv:
         get_advisories(dir,year, storm, basin=basin)
 
-    data = get_data_from_shapefiles(dir)
+    data = get_data_from_shapefiles(f"{dir}")
+
 
     for advisnum, v in tqdm(sorted(data.items())):
         fig = plt.figure()
         ax = fig.add_subplot(111)
         pltfilename = f"{dir}/frames/{dir}_{advisnum}.png"
-        if not overwrite and os.path.exists(pltfilename):
+        if not overwrite and os.path.exists(pltfilename) and advisnum != "030":
             continue
         m = make_map(projection='mill', background='BlueMarble')
         cnt=0
         pastadvs = previous_advisories(advisnum, data)
         # initialize off map with maximum to ensure early plots reflect a 0-200 scale
-        lats = [0]
-        lons = [0]
-        winds = [200]
+        lats = [0,0]
+        lons = [0,0]
+        winds = [0,200]
         prevcstr = ''
-        catstr = ''
         for advisnum2 in tqdm(pastadvs):
             cnt +=1
             m.readshapefile(data[advisnum2]['lin']['filename'].replace('.shp', ''), 'past_track',
@@ -135,28 +133,14 @@ def make_frames(dir, year, storm, basin='AL', fetch_latest_adv=True, overwrite=F
             pos = data[advisnum2]['lin']['points'][0]
             lons.append(pos[0])
             lats.append(pos[1])
+            # print(m.past_pts_info[0]['GUST'])
             wind = m.past_pts_info[0]['MAXWIND']
-            if wind >= 157:
-                catstr = 'cat 5'
-            if wind >= 130:
-                catstr = 'cat 4'
-            if wind >= 111:
-                catstr = 'cat 3'
-            if wind >= 96:
-                catstr = 'cat 2'
-            if wind >= 74:
-                catstr = 'cat 1'
-            if wind >= 39:
-                catstr = 'TS'
-            if wind > 0:
-                catstr = 'TD'
+            winds.append(wind)
+            catstr = hurricat(wind)
             if catstr != prevcstr:
                 prevcstr = catstr
-                print(catstr)
-            winds.append(m.past_pts_info[0]['GUST'])
         x, y = m(lons, lats)
-        # plt.scatter(x, y, c=winds, cmap=cmap_g2r, marker='o', s=8, alpha=1, zorder=4)
-        plt.scatter(x, y, c=winds, marker='o', s=8, alpha=1, zorder=4)
+        plt.scatter(x, y, c=winds, cmap=cmap, marker='o', s=8, alpha=1, zorder=4)
         pos = data[advisnum]['lin']['points'][0]
         xh, yh = m(pos[0], pos[1])
         plt.plot(xh, yh, 'ok', markersize=2.5, alpha=0.5)
@@ -173,21 +157,46 @@ def make_frames(dir, year, storm, basin='AL', fetch_latest_adv=True, overwrite=F
                      xycoords='axes fraction',
                      horizontalalignment='right', fontsize=6)
         plt.title(f"{v['STORMNAME']} forecasted track")
-        # clb = plt.colorbar()
-        # clb.set_label('winds (mph)')#, labelpad=-40, y=1.05, rotation=0)
-
+        cb = plt.colorbar(cmap=cmap)
+        # pprint(wind)
+        cb.set_ticks([0,39,74,96,111,130,157])
+        cb.set_ticklabels(['TD', 'TS', 'Cat1', 'Cat2', 'Cat3', 'Cat4','Cat5'])
+        print (wind)
+        cb.ax.annotate(wind, (.1, wind), size=10, color='b')
+        cb.ax.annotate(wind, (0, wind), size=9, color='w')
+        # cb.ax.plot([0, 200], [cb.norm(50), cb.norm(100)], 'r')
         plt.savefig(pltfilename, format='png')
         plt.clf()
+
+
+def hurricat(wind):
+    catstr = 'error'
+    if wind >= 157:
+        catstr = 'cat 5'
+    if wind >= 130:
+        catstr = 'cat 4'
+    if wind >= 111:
+        catstr = 'cat 3'
+    if wind >= 96:
+        catstr = 'cat 2'
+    if wind >= 74:
+        catstr = 'cat 1'
+    if wind >= 39:
+        catstr = 'TS'
+    if wind > 0:
+        catstr = 'TD'
+    return catstr
+
 
 def previous_advisories(advisnum, data):
     pastadvs = []
     for advisnum2 in tqdm(data.keys()):
-        if advisnum2 < advisnum:
+        if advisnum2 <= advisnum:
             pastadvs.append(advisnum2)
     return pastadvs
 
-def get_data_from_shapefiles(dir):
-    basedir = f"{dir}/nhc_data"
+def get_data_from_shapefiles(dir, prod='5day'):
+    basedir = f"{dir}/nhc_data/{prod}"
     data = {}
     for dirname in sorted(os.listdir(basedir)):
         if dirname.startswith('.'):
@@ -308,14 +317,13 @@ class MyTestCase(unittest.TestCase):
                self.assertTrue(os.path.isdir(f"{basedir}/{dir}"))
 
     def test_2_Dorian(self):
-        # get_advisories('2019Dorian', year=2019, storm=5)
         make_frames('2019Dorian', year=2019, storm=5, fetch_latest_adv=True)
         makemovie('2019Dorian')
 
     def test_3_Florence(self):
         # get_advisories('2018Florence', 2018, 6)
         make_frames('2018Florence', 2018, 6)
-        # makemovie('2018Florence')
+        makemovie('2018Florence')
 if __name__ == '__main__':
     make_frames('2019Dorian', year=2019, storm=5, fetch_latest_adv=True)
     makemovie('2019Dorian')
